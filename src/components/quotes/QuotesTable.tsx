@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { FileText, Trash2, ShoppingCart, Eye } from "lucide-react";
+import { FileText, Trash2, ShoppingCart, Eye, MessageCircle } from "lucide-react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -25,6 +25,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { QuoteViewDialog } from "./QuoteViewDialog";
 import type { Database } from "@/integrations/supabase/types";
+import { formatQuoteForWhatsApp, openWhatsApp } from "@/lib/whatsappUtils";
+import { useTranslation } from "react-i18next";
 
 type Quote = Database["public"]["Tables"]["quotes"]["Row"] & {
   quote_items: Array<
@@ -41,6 +43,7 @@ interface QuotesTableProps {
 
 export const QuotesTable = ({ quotes, onUpdate }: QuotesTableProps) => {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [convertId, setConvertId] = useState<string | null>(null);
   const [viewQuote, setViewQuote] = useState<Quote | null>(null);
@@ -144,6 +147,48 @@ export const QuotesTable = ({ quotes, onUpdate }: QuotesTableProps) => {
     }
   };
 
+  const handleSendWhatsApp = async (quote: Quote) => {
+    try {
+      // Fetch client data to get phone number
+      const { data: client, error } = await supabase
+        .from("clients")
+        .select("phone, whatsapp")
+        .eq("id", quote.client_id)
+        .single();
+
+      if (error) throw error;
+
+      const phoneNumber = client.whatsapp || client.phone;
+      if (!phoneNumber) {
+        toast({
+          title: t("common.error"),
+          description: "Client phone number not found",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const message = formatQuoteForWhatsApp(quote);
+      openWhatsApp(phoneNumber, message);
+
+      // Update quote status to "sent" if it's still draft
+      if (quote.status === "draft") {
+        await supabase
+          .from("quotes")
+          .update({ status: "sent" })
+          .eq("id", quote.id);
+        
+        onUpdate();
+      }
+    } catch (error: any) {
+      toast({
+        title: t("common.error"),
+        description: error.message,
+        variant: "destructive",
+      });
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, "default" | "secondary" | "destructive"> = {
       draft: "secondary",
@@ -190,9 +235,20 @@ export const QuotesTable = ({ quotes, onUpdate }: QuotesTableProps) => {
                       variant="ghost"
                       size="icon"
                       onClick={() => setViewQuote(quote)}
+                      title={t("common.view")}
                     >
                       <Eye className="h-4 w-4" />
                     </Button>
+                    {quote.client_id && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleSendWhatsApp(quote)}
+                        title="Send via WhatsApp"
+                      >
+                        <MessageCircle className="h-4 w-4" />
+                      </Button>
+                    )}
                     {quote.status === "draft" && (
                       <Button
                         variant="ghost"
@@ -207,6 +263,7 @@ export const QuotesTable = ({ quotes, onUpdate }: QuotesTableProps) => {
                       variant="ghost"
                       size="icon"
                       onClick={() => setDeleteId(quote.id)}
+                      title={t("common.delete")}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

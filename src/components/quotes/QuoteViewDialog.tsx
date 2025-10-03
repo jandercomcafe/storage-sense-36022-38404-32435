@@ -1,8 +1,12 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download } from "lucide-react";
+import { Download, MessageCircle } from "lucide-react";
 import { format } from "date-fns";
 import type { Database } from "@/integrations/supabase/types";
+import { formatQuoteForWhatsApp, openWhatsApp } from "@/lib/whatsappUtils";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "react-i18next";
 
 type Quote = Database["public"]["Tables"]["quotes"]["Row"] & {
   quote_items: Array<
@@ -19,8 +23,51 @@ interface QuoteViewDialogProps {
 }
 
 export const QuoteViewDialog = ({ quote, open, onOpenChange }: QuoteViewDialogProps) => {
+  const { toast } = useToast();
+  const { t } = useTranslation();
+
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleSendWhatsApp = async () => {
+    try {
+      if (!quote.client_id) {
+        toast({
+          title: t("common.error"),
+          description: "No client associated with this quote",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const { data: client, error } = await supabase
+        .from("clients")
+        .select("phone, whatsapp")
+        .eq("id", quote.client_id)
+        .single();
+
+      if (error) throw error;
+
+      const phoneNumber = client.whatsapp || client.phone;
+      if (!phoneNumber) {
+        toast({
+          title: t("common.error"),
+          description: "Client phone number not found",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const message = formatQuoteForWhatsApp(quote);
+      openWhatsApp(phoneNumber, message);
+    } catch (error: any) {
+      toast({
+        title: t("common.error"),
+        description: error.message,
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -97,6 +144,12 @@ export const QuoteViewDialog = ({ quote, open, onOpenChange }: QuoteViewDialogPr
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>
+          {quote.client_id && (
+            <Button variant="outline" onClick={handleSendWhatsApp}>
+              <MessageCircle className="mr-2 h-4 w-4" />
+              Send WhatsApp
+            </Button>
+          )}
           <Button onClick={handlePrint}>
             <Download className="mr-2 h-4 w-4" />
             Print/Export
